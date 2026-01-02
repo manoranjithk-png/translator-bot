@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neurealm Controller</title>
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+    <style>
+        /* Clean, centered layout */
+        body { 
+            font-family: 'Segoe UI', sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center; 
+            height: 100vh; 
+            background: #f0f2f5; 
+            margin: 0; 
+        }
+
+        .card { 
+            background: white; 
+            padding: 40px 60px; /* Adjusted padding since text is gone */
+            border-radius: 15px; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1); 
+            text-align: center; 
+            /* Width adjusted to look balanced without text */
+            width: auto; 
+            min-width: 250px;
+        }
+
+        h2 { 
+            margin-bottom: 30px; 
+            color: #333; 
+        }
+        
+        /* The Big Toggle Switch */
+        .switch { 
+            position: relative; 
+            display: inline-block; 
+            width: 90px; 
+            height: 50px; 
+            margin-bottom: 10px; /* Slight margin adjustment */
+        }
+
+        .switch input { 
+            opacity: 0; 
+            width: 0; 
+            height: 0; 
+        }
+
+        .slider { 
+            position: absolute; 
+            cursor: pointer; 
+            top: 0; 
+            left: 0; 
+            right: 0; 
+            bottom: 0; 
+            background-color: #ff4d4d; /* Red by default (OFF) */
+            transition: .4s; 
+            border-radius: 50px; 
+        }
+
+        .slider:before { 
+            position: absolute; 
+            content: ""; 
+            height: 42px; 
+            width: 42px; 
+            left: 4px; 
+            bottom: 4px; 
+            background-color: white; 
+            transition: .4s; 
+            border-radius: 50%; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2); 
+        }
+        
+        /* Checked State (Green) */
+        input:checked + .slider { 
+            background-color: #10b981; 
+        }
+        input:checked + .slider:before { 
+            transform: translateX(40px); 
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>Translator Bot</h2>
+    
+    <label class="switch">
+        <input type="checkbox" id="botToggle" checked onchange="toggleBot()">
+        <span class="slider"></span>
+    </label>
+    
+    </div>
+
+<script>
+    let room;
+    const encoder = new TextEncoder();
+
+    // 1. Get Token from the "Magic Link" URL
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    const url = params.get('url');
+
+    async function init() {
+        // If parameters are missing, we log to console only.
+        if (!token || !url) {
+            console.log("Missing Link parameters. Run the python script to get the Magic Link.");
+            return;
+        }
+
+        room = new LiveKitClient.Room();
+        try {
+            await room.connect(url, token);
+            console.log('Connected to Room:', room.name);
+            
+            // Connected! Update toggle state
+            updateUI(true);
+            
+            // Listen for changes from the server side
+            room.on('dataReceived', (payload, participant) => {
+                const strData = new TextDecoder().decode(payload);
+                const data = JSON.parse(strData);
+                if (data.action === "toggle_bot") {
+                    updateUI(data.enabled);
+                }
+            });
+
+        } catch (error) {
+            console.error(error);
+        }
+    }
+
+    async function toggleBot() {
+        if (!room) {
+            console.log("Room not connected, cannot toggle.");
+            return;
+        }
+        const isChecked = document.getElementById('botToggle').checked;
+        
+        // Update Visuals (Just the switch color/position)
+        updateUI(isChecked);
+
+        // Send Command to Python Bot
+        const data = JSON.stringify({ action: "toggle_bot", enabled: isChecked });
+        await room.localParticipant.publishData(encoder.encode(data), { reliable: true });
+    }
+
+    function updateUI(isEnabled) {
+        // Update the checkbox state
+        document.getElementById('botToggle').checked = isEnabled;
+        
+        // Ensure the slider background color matches the state manually if needed, 
+        // though CSS handles the checkbox state automatically.
+        const slider = document.querySelector('.slider');
+        slider.style.backgroundColor = isEnabled ? "#10b981" : "#ff4d4d";
+    }
+
+    // Start automatically
+    init();
+</script>
+
+</body>
+</html>
