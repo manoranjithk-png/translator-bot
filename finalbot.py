@@ -5,63 +5,73 @@ import webbrowser
 import pathlib
 import sys
 import jwt  # Standard PyJWT library
+from aiohttp import web # <--- NEW IMPORT FOR RENDER
 from dotenv import load_dotenv
 
 # 1. LOAD CONFIGURATION
 load_dotenv()
 
 # ============================================================
+# 🏥 HEALTH CHECK SERVER (For Render)
+# ============================================================
+async def start_health_check_server():
+    async def handle_health(request):
+        # This simple response tells Render "I am alive!"
+        return web.Response(text="Neurealm Bot is Running!")
+        
+    app = web.Application()
+    app.add_routes([web.get('/', handle_health)])
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    # Render automatically provides the PORT variable
+    port = int(os.getenv("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"🏥 Health check server started on port {port}")
+
+# ============================================================
 # 🩺 THE TOKEN SURGEON (Fixes 401 & Attribute Errors)
 # ============================================================
 from livekit import api
 
-# Save the original method so we can use it to generate the payload
+# Save the original method
 _original_to_jwt = api.AccessToken.to_jwt
 
 def patched_to_jwt(self):
     """
-    1. Let the library generate the token (so it gets grants/identity right).
-    2. Decode it.
-    3. FORCE the dates to be safe (2025).
-    4. Re-sign it.
+    Rewrites tokens to have 2024-2030 timestamps to fix date issues.
     """
-    # Step 1: Generate the bad (2026) token using the original method
-    # This might fail if the library checks time internally, but usually it doesn't throw here.
     try:
         raw_token = _original_to_jwt(self)
     except Exception:
-        # If original fails, we construct a fallback payload manually
         raw_token = None
 
-    # Step 2: Prepare safe timestamps (Jan 1, 2024 to Jan 1, 2030)
-    SAFE_IAT = 1704067200
-    SAFE_EXP = 1893456000
+    SAFE_IAT = 1704067200 # Jan 1, 2024
+    SAFE_EXP = 1893456000 # Jan 1, 2030
 
     if raw_token:
-        # Decode the token to get the payload (grants, identity, etc.)
         payload = jwt.decode(raw_token, options={"verify_signature": False})
     else:
-        # Fallback if original method completely failed
         payload = {
             "iss": self.api_key,
             "sub": self.identity,
-            "video": {"room": "neurealm-room", "roomJoin": True} # Fallback grants
+            "video": {"room": "neurealm-room", "roomJoin": True}
         }
 
-    # Step 3: SURGERY - Overwrite the time fields
+    # SURGERY: Force safe dates
     payload['iat'] = SAFE_IAT
     payload['nbf'] = SAFE_IAT
     payload['exp'] = SAFE_EXP
     
-    # Step 4: Re-sign with the API Secret
     return jwt.encode(payload, self.api_secret, algorithm="HS256")
 
 # Apply the Patch
 api.AccessToken.to_jwt = patched_to_jwt
-print("🩺 TOKEN SURGEON APPLIED: All tokens are now being rewritten with 2024-2030 timestamps.")
+print("🩺 TOKEN SURGEON APPLIED: Timestamps locked to 2024-2030.")
 
 # ============================================================
-# IMPORTS (After patch)
+# IMPORTS
 # ============================================================
 from livekit import rtc
 from livekit.agents import JobContext, WorkerOptions, cli
@@ -84,6 +94,11 @@ BOT_ENABLED = True
 # MAIN BOT LOGIC
 # ============================================================
 async def entrypoint(ctx: JobContext):
+    # --- START HEALTH CHECK FOR RENDER ---
+    # This runs the fake website in the background so Render doesn't kill the bot
+    await start_health_check_server()
+    # -------------------------------------
+
     global BOT_ENABLED
     lk_api = api.LiveKitAPI(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
 
@@ -134,7 +149,7 @@ async def entrypoint(ctx: JobContext):
         await lk_api.aclose()
 
 # ============================================================
-# HELPERS
+# HELPERS (Unchanged)
 # ============================================================
 async def apply_bot_toggle_state(room):
     global BOT_ENABLED
@@ -239,20 +254,20 @@ async def start_agent_translator(ctx: JobContext, participant, lk_api):
 # LAUNCHER
 # ============================================================
 def open_controller():
-    try:
-        # Generate controller token (which will also get surgically repaired automatically)
-        token = api.AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET) \
-            .with_identity("controller-user") \
-            .with_name("Controller") \
-            .with_grants(api.VideoGrants(room_join=True, room=FIXED_ROOM_NAME)) \
-            .to_jwt()
-
-        current_dir = pathlib.Path(__file__).parent.resolve()
-        file_path = current_dir / "index.html"
-        if file_path.exists():
-            webbrowser.open(f"{file_path.as_uri()}?url={LIVEKIT_URL}&token={token}")
-            print(f"🚀 Controller Opened.")
-    except Exception: pass
+    # Only open controller if running locally (not on Render)
+    if not os.getenv("RENDER"): 
+        try:
+            token = api.AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET) \
+                .with_identity("controller-user") \
+                .with_name("Controller") \
+                .with_grants(api.VideoGrants(room_join=True, room=FIXED_ROOM_NAME)) \
+                .to_jwt()
+            current_dir = pathlib.Path(__file__).parent.resolve()
+            file_path = current_dir / "index.html"
+            if file_path.exists():
+                webbrowser.open(f"{file_path.as_uri()}?url={LIVEKIT_URL}&token={token}")
+                print(f"🚀 Controller Opened.")
+        except Exception: pass
 
 if __name__ == "__main__":
     open_controller()
