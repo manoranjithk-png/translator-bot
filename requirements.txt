@@ -2,3 +2,10 @@ Flask
 twilio
 gunicorn
 python-dotenv
+livekit
+livekit-agents
+livekit-plugins-openai
+livekit-plugins-silero
+python-dotenv
+aiohttp
+PyJWT
